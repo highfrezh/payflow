@@ -93,6 +93,88 @@ The system context shows PayFlow's boundary, with email notification and an exte
 
 The initial implementation focuses on authenticated API operations and PostgreSQL-backed wallet and transaction management. Load balancing, caching, replication and asynchronous processing are introduced and evaluated incrementally rather than assumed from the start.
 
+## Data Model
+
+PayFlow uses PostgreSQL as the authoritative source of truth, employing an immutable double-entry ledger, balance invariants, and a transactional outbox.
+
+```mermaid
+erDiagram
+    AspNetUsers ||--o| Wallets : owns
+    AspNetUsers ||--o{ IdempotencyRecords : makes
+    Wallets ||--o{ Transfers : "sends (source)"
+    Wallets ||--o{ Transfers : "receives (destination)"
+    Transfers ||--|{ LedgerEntries : posts
+    Wallets ||--o{ LedgerEntries : "is affected by"
+    IdempotencyRecords |o--o| Transfers : "results in"
+    OutboxMessages ||--o{ ProcessedEvents : "is consumed as"
+
+    AspNetUsers {
+        uuid id PK "ASP.NET Core Identity table"
+        string email UK
+        string password_hash
+        timestamptz created_at
+    }
+
+    Wallets {
+        uuid id PK
+        uuid user_id FK "UNIQUE, one wallet per user"
+        string currency "NGN"
+        bigint balance_kobo "CHECK balance_kobo >= 0 unless is_system"
+        boolean is_system "funding wallet used for deposits"
+        uint xmin "row version for optimistic concurrency"
+        timestamptz created_at
+    }
+
+    Transfers {
+        uuid id PK
+        string type "TRANSFER or DEPOSIT"
+        uuid source_wallet_id FK
+        uuid destination_wallet_id FK "CHECK source <> destination"
+        bigint amount_kobo "CHECK amount_kobo > 0"
+        string currency
+        string status "COMPLETED"
+        timestamptz created_at
+    }
+
+    LedgerEntries {
+        uuid id PK
+        uuid transfer_id FK
+        uuid wallet_id FK
+        string direction "DEBIT or CREDIT"
+        bigint amount_kobo "CHECK amount_kobo > 0"
+        bigint balance_after_kobo
+        timestamptz created_at "insert-only, never updated or deleted"
+    }
+
+    IdempotencyRecords {
+        uuid id PK
+        uuid user_id FK
+        string idempotency_key "UNIQUE with user_id"
+        string request_hash "recipient, amount, currency"
+        string status "IN_PROGRESS or COMPLETED"
+        uuid transfer_id FK "null until completed"
+        int response_status
+        jsonb response_body
+        timestamptz created_at
+    }
+
+    OutboxMessages {
+        uuid id PK "also the event id"
+        string event_type "TransferCompleted"
+        jsonb payload
+        timestamptz created_at
+        timestamptz published_at "null until published"
+    }
+
+    ProcessedEvents {
+        uuid event_id PK, FK "outbox message id"
+        string consumer PK "for example NotificationWorker"
+        timestamptz processed_at
+    }
+```
+
+> For full table constraints, indexes, and transaction design notes, see [Data Model Documentation](docs/data-model.md).
+
 ## System Design Documentation
 
 | Document | Status |
