@@ -101,12 +101,12 @@ PayFlow uses PostgreSQL as the authoritative source of truth, employing an immut
 erDiagram
     AspNetUsers ||--o| Wallets : owns
     AspNetUsers ||--o{ IdempotencyRecords : makes
-    Wallets ||--o{ Transfers : "sends (source)"
-    Wallets ||--o{ Transfers : "receives (destination)"
+    Wallets ||--o{ Transfers : "sends as source"
+    Wallets ||--o{ Transfers : "receives as destination"
     Transfers ||--|{ LedgerEntries : posts
-    Wallets ||--o{ LedgerEntries : "is affected by"
+    Wallets ||--o{ LedgerEntries : "affected by"
     IdempotencyRecords |o--o| Transfers : "results in"
-    OutboxMessages ||--o{ ProcessedEvents : "is consumed as"
+    OutboxMessages ||--o{ ProcessedEvents : "consumed as"
 
     AspNetUsers {
         uuid id PK "ASP.NET Core Identity table"
@@ -119,7 +119,7 @@ erDiagram
         uuid id PK
         uuid user_id FK "UNIQUE, one wallet per user"
         string currency "NGN"
-        bigint balance_kobo "CHECK balance_kobo >= 0 unless is_system"
+        bigint balance_kobo "CHECK balance_kobo non-negative unless is_system"
         boolean is_system "funding wallet used for deposits"
         uint xmin "row version for optimistic concurrency"
         timestamptz created_at
@@ -127,10 +127,10 @@ erDiagram
 
     Transfers {
         uuid id PK
-        string type "TRANSFER or DEPOSIT"
+        string transfer_type "TRANSFER or DEPOSIT"
         uuid source_wallet_id FK
-        uuid destination_wallet_id FK "CHECK source <> destination"
-        bigint amount_kobo "CHECK amount_kobo > 0"
+        uuid destination_wallet_id FK "CHECK source != destination"
+        bigint amount_kobo "CHECK amount_kobo positive"
         string currency
         string status "COMPLETED"
         timestamptz created_at
@@ -141,7 +141,7 @@ erDiagram
         uuid transfer_id FK
         uuid wallet_id FK
         string direction "DEBIT or CREDIT"
-        bigint amount_kobo "CHECK amount_kobo > 0"
+        bigint amount_kobo "CHECK amount_kobo positive"
         bigint balance_after_kobo
         timestamptz created_at "insert-only, never updated or deleted"
     }
@@ -167,7 +167,7 @@ erDiagram
     }
 
     ProcessedEvents {
-        uuid event_id PK, FK "outbox message id"
+        uuid event_id PK "FK to OutboxMessages"
         string consumer PK "for example NotificationWorker"
         timestamptz processed_at
     }
